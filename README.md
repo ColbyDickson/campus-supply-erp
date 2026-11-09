@@ -80,7 +80,7 @@ Use **Inventory → Print barcode labels** to print Code 128 labels. A USB scann
 
 ## What remains before the final demo
 
-Sales orders, returns/exchanges, production operations and quality metrics, purchasing/receiving and supplier scorecards/payments, lead-time reorder rules and EOQ, backorders/availability dates, MRP, customer pickup ordering, a wow feature, and live acceptance checks. The five BOMs and supplier records are starting data, not functioning production or purchasing modules. Kits in this starter are sold from preassembled finished stock; checkout does not also consume their components.
+Sales orders, returns/exchanges, production operations and quality metrics, supplier editing and scorecards/payments, lead-time reorder rules and EOQ, backorders/availability dates, MRP, customer pickup ordering, a wow feature, and live acceptance checks. The five BOMs and supplier records are starting data, not functioning production operations. Purchasing is added by migration 004 below. Kits in this starter are sold from preassembled finished stock; checkout does not also consume their components.
 
 The starter P&L covers the events implemented so far. It does not record rent, payroll, supplier bills, returns, or a full accounting general ledger. Inventory turnover is COGS for the selected period divided by the average of opening and closing inventory value; it is **not annualized**. The tax rate is fictional for class and editable by the project owner in `settings`.
 
@@ -121,3 +121,11 @@ flowchart LR
 Sales snapshot prices and unit costs so later cost changes do not rewrite past profit. Transfers remove value at the source cost and recalculate the destination average. The movement ledger records opening balances, generated historical replenishments, sales, transfers, and adjustments, enabling quantity and value reconciliation. All financial date filtering uses UTC; individual transaction timestamps are displayed in the viewer's local timezone.
 
 AI coding assistance: **OpenAI Codex in ChatGPT**. Frontend: **JavaScript + Vite**. Shared database, identity, and change notifications: **Supabase PostgreSQL, Auth, Realtime**. Barcodes: **JsBarcode**. Testing: **Node test runner, PGlite, Happy DOM**. Code collaboration and interface hosting: **GitHub and GitHub Pages**. Your team remains responsible for verifying results and understanding the ERP concepts.
+
+## Purchasing update: apply to your existing project
+
+After merging the purchasing pull request, run **only** [supabase/004_purchasing.sql](supabase/004_purchasing.sql) in a new Supabase SQL Editor query. Do not rerun 001 or reseed/reset your database. This migration preserves existing users, inventory, and sales. Refresh the website; the Purchasing tab is available. Until the migration is applied, that tab displays setup instructions and the original modules still work.
+
+In Purchasing, create a PO for a supplier, enter quantities and negotiated costs, and save it. Creation marks it **Order Sent** as a class simulation; the app does not email suppliers. Use View / print to print or save the PO. Expected date is sent date (UTC) plus the supplier's quoted lead days, snapshotted together with payment terms. Choose Receive delivery, optionally scan the item barcode, select the PO item and receiving location, and enter the quantity that arrived. Multiple partial receipts are allowed; over-receiving is rejected. Receipt history compares actual dates with expected dates. Receipt costs update weighted inventory valuation and the movement ledger; purchasing inventory does not immediately create a sales expense. Fully received POs become Received and can then be Closed.
+
+Supplier editing, historical PO data, payments/bills, supplier scorecards, reorder rules, and EOQ remain future work. PO receipt retries on the same open form use the same request ID; if a network result is unclear, inspect history before reopening the form or refreshing the browser. Real multi-session receiving and physical barcode tests are still required.
