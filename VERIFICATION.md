@@ -29,3 +29,12 @@ Use a fresh test Supabase project first. These operations change that project's 
 Complete the pending modules in PROJECT_PLAN.md, then extend these checks to all twelve capabilities and the wow feature. Test partial PO receipts, late suppliers, unpaid/partially paid bills, cancelled/fulfilled orders, partial returns, failed-quality returns, exchanges, production scrap/rework, MRP timing, insufficient components and customer isolation. Every number must change correctly when its stored inputs change.
 
 The instructor chooses the live scenarios. Practice with varied requests rather than one memorized path. Every teammate must present a feature, dress professionally, and explain how the ERP connects operations and finance. Keep tool documentation in the app current. Bring the physical barcode labels and working scanner.
+
+## Purchasing acceptance checks (migration 004)
+
+- Apply 004 to the existing project; confirm existing stock, staff logins and sales are unchanged.
+- Create a multi-line PO with quantities and costs. Confirm expected date = sent UTC date + quoted lead days; verify the printable document and stored payment terms. Sending is simulated, not external email.
+- Receive some units into Stockroom; confirm stock quantity, weighted cost and valuation change and that net sales do not. Check actual-versus-expected date in history.
+- Receive the remainder, including using a real printed barcode to select an outstanding item. Confirm Received status; close the order. Attempt early closing and over-receiving: both must fail.
+- Retry the same receipt form after a lost response and confirm no duplicate stock. Check a second user's inventory. Simultaneously receive the last outstanding units from two sessions; only one should succeed.
+- Unenrolled/anonymous users cannot access or write purchasing data. Supplier analytics, payment tracking, EOQ and reorder rules remain pending.

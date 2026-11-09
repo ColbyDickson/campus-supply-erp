@@ -18,6 +18,7 @@ before(async () => {
     grant usage on schema public,auth to anon,authenticated;`);
   await db.exec(await readFile(new URL('../supabase/001_schema.sql',import.meta.url),'utf8'));
   await db.exec(await readFile(new URL('../supabase/002_seed.sql',import.meta.url),'utf8'));
+  await db.exec(await readFile(new URL('../supabase/004_purchasing.sql',import.meta.url),'utf8'));
   await query('insert into auth.users values($1)', [staff]);
   await query('insert into team_members values($1,$2)', [staff,'Test teammate']);
   await query("select set_config('request.jwt.claim.sub',$1,false)", [staff]);
@@ -145,4 +146,53 @@ test('anonymous users have no table access or RPC execution', async () => {
     await assert.rejects(query('select * from products'));
     await assert.rejects(checkout(randomUUID(),[{product_id:product.id,quantity:1}]));
   } finally { await db.exec('reset role'); }
+});
+
+test('purchase order snapshots lead time, supports partial receipts, values stock, and closes only when complete', async()=>{
+  const id=randomUUID(),otherItem=await one("select * from products where sku='PENCIL'");
+  const items=[{product_id:product.id,quantity:4,unit_cost:0.50},{product_id:otherItem.id,quantity:2,unit_cost:0.30}];
+  const create=()=>query('select create_purchase_order($1,$2,$3::jsonb)',[id,product.supplier_id,JSON.stringify(items)]);
+  await create();await create();
+  const po=await one('select * from purchase_orders where id=$1',[id]);
+  assert.equal(po.status,'Order Sent');
+  assert.equal((await one('select expected_date=(sent_at at time zone \'UTC\')::date+quoted_lead_days ok from purchase_orders where id=$1',[id])).ok,true);
+  const lines=await query('select * from purchase_lines where purchase_order_id=$1 order by product_id',[id]);
+  const line=lines.find(l=>l.product_id===product.id),second=lines.find(l=>l.product_id===otherItem.id);
+  await assert.rejects(query('select close_purchase($1)',[id]),/Receive all/);
+  const before=await stock(), receipt=randomUUID();
+  const receive=(rid,lid,qty)=>query('select receive_purchase($1,$2,$3,$4)',[rid,lid,location.id,qty]);
+  await receive(receipt,line.id,2);await receive(receipt,line.id,2);
+  assert.equal((await stock()).quantity,before.quantity+2);
+  assert.ok(Math.abs(Number((await stock()).average_cost)-(before.quantity*Number(before.average_cost)+1)/(before.quantity+2))<0.000001);
+  assert.equal((await one('select status from purchase_orders where id=$1',[id])).status,'Order Sent');
+  await assert.rejects(receive(randomUUID(),line.id,3),/exceeds/);
+  await assert.rejects(receive(receipt,line.id,1),/different receipt/);
+  assert.equal((await stock()).quantity,before.quantity+2);
+  await receive(randomUUID(),line.id,2);await receive(randomUUID(),second.id,2);
+  assert.equal((await one('select status from purchase_orders where id=$1',[id])).status,'Received');
+  await query('select close_purchase($1)',[id]);await query('select close_purchase($1)',[id]);
+  assert.equal((await one('select status from purchase_orders where id=$1',[id])).status,'Closed');
+  const report=(await one('select financial_report(current_date,current_date) r')).r;
+  assert.ok(Math.abs(Number(report.current_inventory)-Number(report.closing_inventory))<0.01);
+});
+test('invalid POs and receipts roll back and staff controls apply to purchasing',async()=>{
+  const id=randomUUID();
+  await assert.rejects(query('select create_purchase_order($1,$2,$3::jsonb)',[id,product.supplier_id,JSON.stringify([{product_id:product.id,quantity:1,unit_cost:0.5},{product_id:product.id,quantity:1,unit_cost:0.5}])]));
+  assert.equal((await query('select * from purchase_orders where id=$1',[id])).length,0);
+  for(const line of [{product_id:product.id,quantity:0,unit_cost:1},{product_id:product.id,quantity:1,unit_cost:-1},{product_id:product.id,quantity:1,unit_cost:'NaN'}]){
+    await assert.rejects(query('select create_purchase_order($1,$2,$3::jsonb)',[id,product.supplier_id,JSON.stringify([line])]));
+  }
+  const usb=await one("select * from products where sku='USB'");
+  await assert.rejects(query('select create_purchase_order($1,$2,$3::jsonb)',[id,product.supplier_id,JSON.stringify([{product_id:usb.id,quantity:1,unit_cost:3}])]),/selected supplier/);
+  await db.exec('set role authenticated');
+  try{await assert.rejects(query('update purchase_orders set status=\'Closed\''));}finally{await db.exec('reset role');}
+  await query("select set_config('request.jwt.claim.sub',$1,false)",[randomUUID()]);await db.exec('set role authenticated');
+  try{
+    assert.equal((await query('select * from purchase_orders')).length,0);
+    await assert.rejects(query('select create_purchase_order($1,$2,$3::jsonb)',[id,product.supplier_id,'[]']),/Staff access/);
+    await assert.rejects(query('select receive_purchase($1,$2,$3,1)',[id,id,location.id]),/Staff access/);
+    await assert.rejects(query('select close_purchase($1)',[id]),/Staff access/);
+  }finally{await db.exec('reset role');await query("select set_config('request.jwt.claim.sub',$1,false)",[staff]);}
+  await db.exec(await readFile(new URL('../supabase/004_purchasing.sql',import.meta.url),'utf8'));
+  assert.equal(Number((await one('select count(*) n from purchase_orders')).n),1);
 });

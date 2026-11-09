@@ -7,7 +7,7 @@ const root = document.querySelector('#app');
 const modal = document.querySelector('#modal');
 const S = {
   client: null, session: null, nav: 'dashboard', products: [], locations: [], stock: [], customers: [],
-  sales: [], movements: [], settings: {}, cart: [], discount: 0, location: '', query: '', posQuery: '',
+  sales: [], movements: [], suppliers: [], purchases: [], purchaseError: '', settings: {}, cart: [], discount: 0, location: '', query: '', posQuery: '',
   from: monthStart(), to: utcDay(), report: {}, summary: {}, pending: null, busy: false, refreshing: false,
 };
 let timer, channel, noticeTimer;
@@ -104,17 +104,17 @@ async function refresh(force = false) {
   if (!S.session || S.refreshing || S.busy) return;
   if (!force && (modal.open || ['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))) return;
   S.refreshing = true;
-  try { await load(); render(); } catch(error) { showError(new Error(`Refresh failed. ${error.message}`)); }
+  try { await load(); if(S.nav==='purchasing')await loadPurchases(); render(); } catch(error) { showError(new Error(`Refresh failed. ${error.message}`)); }
   finally { S.refreshing=false; }
 }
 function render() {
-  const titles = { dashboard:['Business overview','Your operations, in one place.'],inventory:['Inventory','Know what’s on hand. Keep it moving.'],checkout:['Point of sale','A smooth checkout. Connected to your stock.'],reports:['Financial reports','Follow the numbers back to the business.'],guide:['Project guide','Build it. Verify it. Explain it.'] };
+  const titles = { dashboard:['Business overview','Your operations, in one place.'],inventory:['Inventory','Know what’s on hand. Keep it moving.'],checkout:['Point of sale','A smooth checkout. Connected to your stock.'],purchasing:['Purchasing','Order supplies. Receive stock. Track what arrived.'],reports:['Financial reports','Follow the numbers back to the business.'],guide:['Project guide','Build it. Verify it. Explain it.'] };
   root.innerHTML = `<div class="app-shell"><aside class="sidebar"><div class="brand">${icon('inventory')}<span>campus<span class="brand-light">supply.</span></span></div>
     <div class="workspace-tag">CAMPUS SUPPLY CO. <span>ERP</span></div><nav aria-label="Main navigation">${Object.keys(titles).map(key=>button(`${icon(key)}<span>${key==='dashboard'?'Overview':key==='checkout'?'Checkout':key==='guide'?'Project guide':titles[key][0]}</span>`,`nav:${key}`,S.nav===key?'active':'',S.nav===key?'aria-current="page"':'')).join('')}</nav>
     <div class="sidebar-bottom"><span class="avatar">${e(S.session.user.email?.[0]?.toUpperCase() || 'C')}</span><div><strong>Team workspace</strong><small>${e(S.session.user.email)}</small></div>${button('↪','logout','icon-button','aria-label="Sign out"')}</div></aside>
     <main class="main"><header class="topbar"><span>WORKSPACE <span class="slash">/</span> ${e(titles[S.nav][0])}</span><div class="sync"><span class="sync-dot"></span>Checked ${S.updated?.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}) || '—'}${button('↻','refresh','icon-button','aria-label="Refresh data"')}${button('Sign out','logout','text-button mobile-signout')}</div></header>
     <div class="page"><div class="page-heading"><div><p class="eyebrow">CAMPUS SUPPLY CO.</p><h1>${titles[S.nav][0]}</h1><p>${titles[S.nav][1]}</p></div>${['inventory','checkout'].includes(S.nav)?`<label class="location-picker">WORKING LOCATION<select id="location" ${S.pending?'disabled':''}>${options(S.locations,S.location)}</select></label>`:S.nav==='dashboard'?button('＋ New sale','nav:checkout','primary'):''}</div>
-    ${S.nav==='dashboard'?dashboard():S.nav==='inventory'?inventory():S.nav==='checkout'?checkoutView():S.nav==='reports'?reports():guide()}</div>
+    ${S.nav==='dashboard'?dashboard():S.nav==='inventory'?inventory():S.nav==='checkout'?checkoutView():S.nav==='purchasing'?purchasing():S.nav==='reports'?reports():guide()}</div>
     <footer>Campus Supply Co. · Class ERP foundation <span>All report dates use UTC · Sample company, fictional data</span></footer></main></div>`;
 }
 const metric = (label,value,description,accent='') => `<article class="metric ${accent}"><span>${label}</span><strong>${value}</strong><small>${description}</small></article>`;
@@ -129,7 +129,7 @@ function dashboard() {
     <div class="dashboard-grid"><section class="panel"><div class="panel-heading"><div><h2>Sales at a glance</h2><p>Actual receipts, grouped by day.</p></div><span class="badge">${e(S.from.slice(0,7))}</span></div>${chart()}</section>
     <section class="panel"><div class="panel-heading"><div><h2>Across your locations</h2><p>Current inventory value</p></div></div><div class="locations-list">${S.locations.map((l,i)=>{const rows=S.stock.filter(s=>s.location_id===l.id);return `<div class="location-card"><span class="location-number">0${i+1}</span><div><strong>${e(l.name)}</strong><small>${rows.reduce((n,s)=>n+s.quantity,0)} units on hand</small></div><strong>${money(rows.reduce((n,s)=>n+s.quantity*Number(s.average_cost),0))}</strong></div>`;}).join('')}</div>${button('Manage inventory →','nav:inventory','text-button')}</section></div>
     <section class="panel"><div class="panel-heading"><div><h2>Recent sales</h2><p>Every checkout connects inventory and financial reporting.</p></div>${button('Open checkout →','nav:checkout','text-button')}</div>${salesTable()}</section>
-    <div class="foundation-note"><span>IN PROGRESS</span><p>This is the working foundation. Production, MRP, purchasing, returns, and customer ordering are still to be built.</p>${button('View project checklist →','nav:guide','text-button')}</div>`;
+    <div class="foundation-note"><span>IN PROGRESS</span><p>This is the working foundation. Production, MRP, returns, customer ordering and advanced purchasing are still to be built.</p>${button('View project checklist →','nav:guide','text-button')}</div>`;
 }
 function salesTable() {
   return `<div class="table-wrap"><table><thead><tr><th>RECEIPT</th><th>DATE</th><th>LOCATION</th><th>NET SALES</th><th>TOTAL WITH TAX</th><th></th></tr></thead><tbody>${S.sales.map(s=>`<tr><td><span class="mono">${e(s.id.slice(0,8).toUpperCase())}</span></td><td>${formatTime(s.created_at)}</td><td>${e(locationName(s.location_id))}</td><td>${money(Number(s.subtotal)-Number(s.discount))}</td><td><strong>${money(s.total)}</strong></td><td>${button('Receipt',`receipt:${s.id}`,'small-button')}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">No sales yet.</td></tr>'}</tbody></table></div>`;
@@ -158,7 +158,7 @@ function reports() {
     <section class="panel"><div class="panel-heading"><div><h2>How the calculations connect</h2><p>These results are computed in the database.</p></div></div><div class="formula-grid"><div><strong>Net sales</strong><p>Stored sale subtotals − discounts. Tax is excluded.</p></div><div><strong>Inventory valuation</strong><p>Quantity on hand × weighted average unit cost, summed across locations.</p></div><div><strong>Inventory turnover</strong><p>Period COGS ÷ average of opening and closing inventory values, reconstructed from movement history.</p><small>Opening ${money(S.report.opening_inventory)} · Closing ${money(S.report.closing_inventory)}</small></div></div></section>`;
 }
 function guide() {
-  const rows=[['1','Point of sale','Foundation ready','Multi-line sales, tax, discounts, stored receipts, stock reduction and COGS.'],['2','Inventory','Partly ready','Three locations, quantities, transfers and reason-coded adjustments. Backorders and availability dates remain.'],['3','Barcodes','Hardware check needed','Code 128 labels and keyboard/USB scan-to-add and scan-to-adjust. Verify printed labels with your actual scanner.'],['4','Sales orders','To build','Order lifecycle and reservation/fulfillment rules.'],['5','Returns & exchanges','To build','Original-sale links, refund limits, quality dispositions, revenue and cost reversals.'],['6','Production','To build','BOMs are seeded; issue/build/scrap, cost rollup, timestamps and metrics remain.'],['7','Purchasing & suppliers','To build','Supplier records are seeded. POs, receipts, lead-time reorder rules, EOQ, payments and computed scorecards remain.'],['8','MRP','To build','Confirmed demand → BOM requirements → net inventory/open PO supply → suggested quantities and dates.'],['9','Financial reporting','Partly ready','P&L for implemented events, weighted inventory valuation, and period inventory turnover. Extend for later modules.'],['10','Manager reporting','Partly ready','Daily sales, top products, low stock and location inventory; procurement recommendations remain.'],['11','Customer portal','To build','Customer login and pickup ordering with separate restricted access.'],['12','Multi-user access','Verify in Supabase','Staff accounts, server transactions, realtime subscription and 10-second refresh fallback. Test two real browsers.']];
+  const rows=[['1','Point of sale','Foundation ready','Multi-line sales, tax, discounts, stored receipts, stock reduction and COGS.'],['2','Inventory','Partly ready','Three locations, quantities, transfers and reason-coded adjustments. Backorders and availability dates remain.'],['3','Barcodes','Hardware check needed','Code 128 labels and keyboard/USB scan-to-add and scan-to-adjust. Verify printed labels with your actual scanner.'],['4','Sales orders','To build','Order lifecycle and reservation/fulfillment rules.'],['5','Returns & exchanges','To build','Original-sale links, refund limits, quality dispositions, revenue and cost reversals.'],['6','Production','To build','BOMs are seeded; issue/build/scrap, cost rollup, timestamps and metrics remain.'],['7','Purchasing & suppliers','Partly ready','Create/print POs, expected lead-time dates, partial receiving, weighted costs and order closing. Sending is simulated. Supplier editing, EOQ/reorder rules, payments and scorecards remain.'],['8','MRP','To build','Confirmed demand → BOM requirements → net inventory/open PO supply → suggested quantities and dates.'],['9','Financial reporting','Partly ready','P&L for implemented events, weighted inventory valuation, and period inventory turnover. Extend for later modules.'],['10','Manager reporting','Partly ready','Daily sales, top products, low stock and location inventory; procurement recommendations remain.'],['11','Customer portal','To build','Customer login and pickup ordering with separate restricted access.'],['12','Multi-user access','Verify in Supabase','Staff accounts, server transactions, realtime subscription and 10-second refresh fallback. Test two real browsers.']];
   return `<section class="panel guide-intro"><p class="eyebrow">BUILD MILESTONE 1</p><h2>A working foundation, with a clear path forward.</h2><p>This starter is not the finished assignment. Before the live demo, complete and verify all twelve capabilities. Every teammate should be able to explain how a sale, a build, and a purchase affect the rest of the system.</p></section><section class="panel"><div class="panel-heading"><h2>Assignment checklist</h2></div><div class="table-wrap"><table><thead><tr><th>#</th><th>CAPABILITY</th><th>STATUS</th><th>DETAILS</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r[0]}</td><td><strong>${r[1]}</strong></td><td><span class="badge ${r[2]==='To build'?'warning':''}">${r[2]}</span></td><td>${r[3]}</td></tr>`).join('')}</tbody></table></div></section>
     <section class="panel"><div class="panel-heading"><h2>Tools & architecture</h2></div><div class="formula-grid"><div><strong>Code & hosting</strong><p>JavaScript, Vite, GitHub and GitHub Pages. AI coding assistance: OpenAI Codex in ChatGPT.</p></div><div><strong>Shared data & identity</strong><p>Supabase PostgreSQL, Supabase Auth, row-level security and transactional database functions.</p></div><div><strong>Checks</strong><p>Node’s test runner and PGlite (PostgreSQL) check seeded data, transactions, valuation and access rules. Real Supabase and physical barcode checks are still required.</p></div></div></section>`;
 }
@@ -218,10 +218,53 @@ function showLabels() {
   for(const svg of modal.querySelectorAll('[data-barcode]')) JsBarcode(svg,svg.dataset.barcode,{format:'CODE128',width:2,height:45,fontSize:13,margin:12});
   modal.showModal();
 }
+async function loadPurchases() {
+  try {
+    const [a,b]=await Promise.all([
+      S.client.from('suppliers').select('*').order('name'),
+      S.client.from('purchase_orders').select('*,purchase_lines(*,purchase_receipts(*))').order('sent_at',{ascending:false}).limit(100),
+    ]);
+    if(a.error||b.error)throw a.error||b.error;
+    S.suppliers=a.data;S.purchases=b.data;S.purchaseError='';
+  }catch(error){S.purchaseError=error.message;}
+}
+function purchasing() {
+  if(S.purchaseError)return `<section class="panel"><h2>Purchasing setup needed</h2><p>In Supabase SQL Editor, run the new file <strong>supabase/004_purchasing.sql</strong>. Keep your existing tables and data. Then press Refresh.</p><p class="hint">Database message: ${e(S.purchaseError)}</p></section>`;
+  return `<section class="panel"><div class="panel-heading"><div><h2>Purchase orders</h2><p>Latest 100 orders · expected dates use the supplier’s quoted lead time.</p></div>${button('＋ New purchase order','new-po','primary')}</div>
+    <p class="hint">Sending is a class simulation: creating a PO marks it Order Sent. Use View / print to save a document; this app does not email suppliers. Receive each delivery when it physically arrives.</p>
+    <div class="table-wrap"><table><thead><tr><th>PO</th><th>SUPPLIER</th><th>STATUS</th><th>EXPECTED (UTC)</th><th>LAST RECEIVED (UTC)</th><th>ORDER VALUE</th><th></th></tr></thead><tbody>${S.purchases.map(p=>{
+      const receipts=p.purchase_lines.flatMap(l=>l.purchase_receipts), dates=receipts.map(r=>r.received_at.slice(0,10)).sort(),last=dates.at(-1);
+      return `<tr><td class="mono">${e(p.id.slice(0,8))}</td><td>${e(S.suppliers.find(s=>s.id===p.supplier_id)?.name)}</td><td><span class="badge">${e(p.status)}</span></td><td>${e(p.expected_date)}</td><td>${last?`${e(last)} <span class="badge ${last>p.expected_date?'warning':''}">${last>p.expected_date?'Late receipt':'On time'}</span>`:'Not received'}</td><td>${money(p.purchase_lines.reduce((n,l)=>n+l.quantity*Number(l.unit_cost),0))}</td><td>${button('View / print',`po:${p.id}`,'small-button')}</td></tr>`;
+    }).join('')||'<tr><td colspan="7" class="empty">No purchase orders yet. Create one to replenish supplies.</td></tr>'}</tbody></table></div></section>
+    <div class="foundation-note"><span>NEXT PURCHASING STEPS</span><p>Supplier editing, payments, historical PO data, scorecards, lead-time reorder rules and EOQ remain to be added.</p></div>`;
+}
+function newPurchaseDialog(supplierId=S.suppliers[0]?.id) {
+  const supplier=S.suppliers.find(s=>s.id===supplierId);
+  if(!supplier)throw new Error('No suppliers available.');
+  const items=S.products.filter(p=>p.supplier_id===supplierId&&!p.is_kit);
+  modal.innerHTML=`<div class="dialog-heading"><h2>New purchase order</h2>${button('×','close','icon-button','aria-label="Close dialog"')}</div><form id="po-form" data-request="${crypto.randomUUID()}"><label>Supplier<select name="supplier" id="po-supplier">${options(S.suppliers,supplierId)}</select></label>
+    <p class="hint">Quoted lead time: ${supplier.quoted_lead_days} days. Terms: Net ${supplier.payment_term_days}. Expected arrival is calculated from today’s UTC date when saved. Set quantities above zero for the items you want.</p>
+    <div class="table-wrap"><table><thead><tr><th>ITEM</th><th>QUANTITY</th><th>QUOTED UNIT COST ($)</th></tr></thead><tbody>${items.map(p=>`<tr><td>${e(p.name)}</td><td><input aria-label="Quantity for ${e(p.name)}" name="qty-${p.id}" type="number" min="0" max="10000" step="1" value="0"></td><td><input aria-label="Unit cost for ${e(p.name)}" name="cost-${p.id}" type="number" min="0" max="1000000" step="0.01" value="${Number(p.standard_cost).toFixed(2)}"></td></tr>`).join('')}</tbody></table></div>
+    <button class="primary wide">Create & mark sent (simulation)</button></form>`;
+  if(!modal.open)modal.showModal();
+}
+function viewPurchase(id) {
+  const p=S.purchases.find(x=>x.id===id),supplier=S.suppliers.find(s=>s.id===p.supplier_id);
+  const document=`<div class="receipt"><p class="eyebrow">CAMPUS SUPPLY CO. · PURCHASE ORDER</p><h2>${e(supplier.name)}</h2><p>${e(supplier.email)} · ${e(supplier.phone)}</p><p class="mono">PO ${e(p.id)}</p><p>Sent: ${e(p.sent_at.slice(0,10))} UTC · Status: ${e(p.status)}<br>Expected: ${e(p.expected_date)} · Quoted lead: ${p.quoted_lead_days} days<br>Terms: Net ${p.payment_term_days} (payment tracking not yet implemented)</p>
+    ${p.purchase_lines.map(l=>`<div class="receipt-line"><div><strong>${e(product(l.product_id)?.name)}</strong><small>${l.quantity} ordered × ${money(l.unit_cost)} · ${l.received} received</small></div><strong>${money(l.quantity*Number(l.unit_cost))}</strong></div>`).join('')}
+    <hr><strong>Total ${money(p.purchase_lines.reduce((n,l)=>n+l.quantity*Number(l.unit_cost),0))}</strong><p class="hint">Fictional company · supplier sending is simulated.</p></div>`;
+  modal.innerHTML=`${document}<div class="dialog-actions">${button('Print PO','print-receipt','secondary')}${p.status==='Order Sent'?button('Receive delivery',`receive-po:${id}`,'primary'):p.status==='Received'?button('Close order',`close-po:${id}`,'primary'):''}${button('Done','close','secondary')}</div><h3>Delivery history</h3>${p.purchase_lines.flatMap(l=>l.purchase_receipts.map(r=>`<p class="hint">${e(product(l.product_id)?.name)}: ${r.quantity} units · ${e(locationName(r.location_id))} · ${e(r.received_at.slice(0,10))} UTC · ${r.received_at.slice(0,10)>p.expected_date?'Late':'On time'}</p>`)).join('')||'<p class="hint">No deliveries recorded.</p>'}`;
+  modal.dataset.receipt=document;if(!modal.open)modal.showModal();
+}
+function receivePurchaseDialog(id) {
+  const p=S.purchases.find(x=>x.id===id),lines=p.purchase_lines.filter(l=>l.received<l.quantity);
+  modal.innerHTML=`<div class="dialog-heading"><h2>Receive PO delivery</h2>${button('×','close','icon-button','aria-label="Close dialog"')}</div><form id="receive-form" data-request="${crypto.randomUUID()}"><label>Scan an item (optional)<input id="receive-scan" placeholder="Barcode + Enter" autocomplete="off"></label><label>PO item<select name="line" id="receive-line">${lines.map(l=>`<option value="${e(l.id)}" data-remaining="${l.quantity-l.received}" data-product="${e(l.product_id)}">${e(product(l.product_id)?.name)} · ${l.quantity-l.received} outstanding</option>`).join('')}</select></label><label>Receive into<select name="location">${options(S.locations,S.location)}</select></label><label>Quantity received today<input name="quantity" type="number" min="1" max="${lines[0].quantity-lines[0].received}" value="1" step="1" required></label><p class="hint">Partial deliveries are supported. Receipt time is recorded now in UTC. If a network response is lost, retry this same form; do not open a new receipt until you check the delivery history.</p><button class="primary wide">Receive stock</button></form>`;
+  if(!modal.open)modal.showModal();
+}
 async function handleAction(target) {
   const [action,id,arg]=target.dataset.act.split(':');
   if(S.busy&&action!=='close')return;
-  if(action==='nav'){S.nav=id;render();}
+  if(action==='nav'){S.nav=id;if(id==='purchasing')await loadPurchases();render();}
   else if(action==='refresh')await refresh(true);
   else if(action==='logout'){ await S.client.auth.signOut(); S.cart=[];S.pending=null; }
   else if(action==='disconnect'){if(S.client)await S.client.auth.signOut();localStorage.removeItem('campus-connection');location.reload();}
@@ -231,6 +274,12 @@ async function handleAction(target) {
   else if(action==='close')modal.close();
   else if(action==='labels')showLabels();
   else if(action==='receipt')await showReceipt(id);
+  else if(action==='new-po')newPurchaseDialog();
+  else if(action==='po')viewPurchase(id);
+  else if(action==='receive-po')receivePurchaseDialog(id);
+  else if(action==='close-po'){
+    S.busy=true;try{const {error}=await S.client.rpc('close_purchase',{p_order:id});if(error)throw error;await loadPurchases();render();viewPurchase(id);notify('Purchase order closed.');}finally{S.busy=false;}
+  }
   else if(action==='print-receipt')printContent(modal.dataset.receipt);
   else if(action==='print-labels')printContent(`<div class="barcode-labels">${modal.querySelector('.barcode-labels').innerHTML}</div>`);
 }
@@ -243,11 +292,20 @@ document.addEventListener('input',event=>{
   if(event.target.id==='pos-search'){S.posQuery=event.target.value;rerenderInput('pos-search');}
 });
 document.addEventListener('change',event=>{
+  if(event.target.id==='po-supplier')newPurchaseDialog(event.target.value);
+  if(event.target.id==='receive-line')modal.querySelector('[name="quantity"]').max=event.target.selectedOptions[0].dataset.remaining;
   if(event.target.id==='location'){S.location=event.target.value;render();}
   if(event.target.id==='customer')S.customer=event.target.value;
   if(event.target.id==='discount'){S.discount=Number(event.target.value);render();}
 });
 document.addEventListener('keydown',event=>{
+  if(event.key==='Enter'&&event.target.id==='receive-scan'){
+    event.preventDefault();const code=event.target.value.trim().toLowerCase();
+    const p=S.products.find(p=>p.barcode.toLowerCase()===code||p.sku.toLowerCase()===code);
+    const option=p&&modal.querySelector(`#receive-line option[data-product="${p.id}"]`);
+    if(!option){notify('This item is not outstanding on this PO.',true);return;}
+    const select=modal.querySelector('#receive-line');select.value=option.value;select.dispatchEvent(new Event('change',{bubbles:true}));event.target.value='';modal.querySelector('[name="quantity"]').focus();
+  }
   if(event.key==='Enter'&&['pos-search','inventory-search'].includes(event.target.id)){
     event.preventDefault(); const code=event.target.value.trim().toLowerCase();
     const p=S.products.find(p=>p.barcode.toLowerCase()===code||p.sku.toLowerCase()===code);
@@ -276,6 +334,15 @@ document.addEventListener('submit',async event=>{
         {p_product:form.dataset.product,p_location:S.location,p_delta:qty,p_reason:data.get('reason'),p_note:note}:
         {p_product:form.dataset.product,p_from:S.location,p_to:data.get('to'),p_quantity:qty,p_note:note});
       if(error)throw error;modal.close();await load();render();notify('Inventory updated and movement recorded.');
+    } else if(form.id==='po-form'){
+      S.busy=true;const supplier=data.get('supplier');
+      const items=S.products.filter(p=>p.supplier_id===supplier&&Number(data.get(`qty-${p.id}`))>0).map(p=>({product_id:p.id,quantity:Number(data.get(`qty-${p.id}`)),unit_cost:data.get(`cost-${p.id}`)}));
+      if(!items.length)throw new Error('Enter a quantity for at least one item.');
+      const {data:id,error}=await S.client.rpc('create_purchase_order',{p_id:form.dataset.request,p_supplier:supplier,p_items:items});
+      if(error)throw error;await loadPurchases();render();viewPurchase(id);notify('PO created; sending is simulated. Print the document to share it.');
+    } else if(form.id==='receive-form'){
+      S.busy=true;const {error}=await S.client.rpc('receive_purchase',{p_id:form.dataset.request,p_line:data.get('line'),p_location:data.get('location'),p_quantity:Number(data.get('quantity'))});
+      if(error)throw error;modal.close();await load();await loadPurchases();render();notify('Delivery received. Inventory and valuation updated.');
     } else if(form.id==='report-form'){
       if(data.get('to')<data.get('from'))throw new Error('End date must be on or after start date.');
       S.from=data.get('from');S.to=data.get('to');await load();render();
