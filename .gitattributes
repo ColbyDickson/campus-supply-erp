@@ -1,0 +1,4 @@
+* text=auto eol=lf
+# Generated hosting output is rebuilt from src/; review the source changes.
+docs/** linguist-generated=true -diff
+package-lock.json linguist-generated=true
