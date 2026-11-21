@@ -35,14 +35,14 @@ test('connection form rejects secret keys without saving them',async()=>{
   }finally{await w.happyDOM.close();}
 });
 
-test('login, navigation, barcode checkout, receipt, adjustment, transfer, and reports interact correctly',async()=>{
+test('POS, inventory, purchasing and sales orders interact correctly, including order retries and setup errors',async()=>{
   const {window:w,code}=await openApp();
   const p='11111111-1111-4111-8111-111111111111',l='22222222-2222-4222-8222-222222222222',other='33333333-3333-4333-8333-333333333333';
   const user={id:'44444444-4444-4444-8444-444444444444',email:'teammate@example.com',aud:'authenticated',role:'authenticated'};
   const supplier='55555555-5555-4555-8555-555555555555';
   const products=[{id:p,name:'Blue ballpoint pen',sku:'PEN',barcode:'CS00001',category:'Writing',supplier_id:supplier,price:1,standard_cost:0.35,reorder_point:5,lead_days:4,is_kit:false}];
-  const rows={products,suppliers:[{id:supplier,name:'Test writing supplier',email:'orders@example.com',phone:'801-555-0100',quoted_lead_days:4,payment_term_days:30}],purchase_orders:[],locations:[{id:l,name:'Storefront'},{id:other,name:'Stockroom'}],stock:[{product_id:p,location_id:l,quantity:10,average_cost:0.35},{product_id:p,location_id:other,quantity:5,average_cost:0.35}],customers:[],settings:{tax_rate:0.0725},sales:[],movements:[]};
-  let checkoutCalls=0, printed=0;
+  const rows={products,suppliers:[{id:supplier,name:'Test writing supplier',email:'orders@example.com',phone:'801-555-0100',quoted_lead_days:4,payment_term_days:30}],purchase_orders:[],locations:[{id:l,name:'Storefront'},{id:other,name:'Stockroom'}],stock:[{product_id:p,location_id:l,quantity:10,average_cost:0.35},{product_id:p,location_id:other,quantity:5,average_cost:0.35}],customers:[{id:'77777777-7777-4777-8777-777777777777',name:'Test customer'}],sales_orders:[],settings:{tax_rate:0.0725},sales:[],movements:[]};
+  let checkoutCalls=0, printed=0, orderCalls=0, orderRequest, failFulfill=true, orderUnavailable=false;
   w.print=()=>{printed++;};
   class NoNetworkWebSocket {static OPEN=1;static CLOSED=3;constructor(){this.readyState=0;}addEventListener(){}removeEventListener(){}send(){}close(){this.readyState=3;}}
   w.WebSocket=NoNetworkWebSocket;
@@ -57,7 +57,22 @@ test('login, navigation, barcode checkout, receipt, adjustment, transfer, and re
     else if(path.endsWith('/rpc/is_staff'))result=true;
     else if(path.endsWith('/rpc/financial_report'))result={net_sales:20,cogs:7,gross_profit:13,operating_profit:13,inventory_adjustment_expense:0,current_inventory:5.25,opening_inventory:10,closing_inventory:5.25,turnover:0.918};
     else if(path.endsWith('/rpc/sales_summary'))result={receipt_count:2,daily_sales:[{day:'2026-11-08',revenue:20}],top_items:[{name:'Blue ballpoint pen',sku:'PEN',units:20,sales:20}]};
-    else if(path.endsWith('/rpc/create_purchase_order')){
+    else if(path.endsWith('/rpc/create_sales_order')){
+      orderCalls++;
+      if(!orderRequest){
+        orderRequest=data;
+        rows.sales_orders.unshift({id:data.p_id,customer_id:data.p_customer,location_id:data.p_location,required_date:data.p_required_date,status:'Order Placed',created_at:new Date().toISOString(),subtotal:2,discount:0,tax_rate:0.0725,tax:0.15,total:2.15,sales_order_lines:data.p_items.map(x=>({...x,unit_price:1,product_name:products[0].name,sku:'PEN'}))});
+        return new w.Response(JSON.stringify({message:'Simulated lost response'}),{status:503,headers:{'content-type':'application/json'}});
+      }
+      assert.deepEqual(data,orderRequest);result=data.p_id;
+    }else if(path.endsWith('/rpc/transition_sales_order')){
+      if(data.p_status==='Fulfilled'&&failFulfill){failFulfill=false;return new w.Response(JSON.stringify({code:'P0001',message:'Insufficient stock (simulated)'}),{status:400,headers:{'content-type':'application/json'}});}
+      const order=rows.sales_orders[0];order.status=data.p_status;
+      if(data.p_status==='Fulfilled'){
+        order.sale_id=order.id;order.fulfilled_at=new Date().toISOString();rows.stock[0].quantity-=2;
+        rows.sales.unshift({id:order.id,location_id:l,created_at:order.fulfilled_at,subtotal:2,discount:0,tax:0.15,total:2.15,cogs:0.7,sale_lines:[{quantity:2,unit_price:1,products:products[0]}]});
+      }result=order.id;
+    }else if(path.endsWith('/rpc/create_purchase_order')){
       rows.purchase_orders.unshift({id:data.p_id,supplier_id:data.p_supplier,sent_at:new Date().toISOString(),status:'Order Sent',quoted_lead_days:4,payment_term_days:30,expected_date:'2026-11-13',purchase_lines:data.p_items.map(x=>({...x,id:'66666666-6666-4666-8666-666666666666',received:0,purchase_receipts:[]}))});result=data.p_id;
     }else if(path.endsWith('/rpc/receive_purchase')){
       const po=rows.purchase_orders[0],line=po.purchase_lines[0];line.received+=data.p_quantity;rows.stock[0].quantity+=data.p_quantity;
@@ -70,6 +85,7 @@ test('login, navigation, barcode checkout, receipt, adjustment, transfer, and re
     }else if(path.endsWith('/rpc/adjust_stock')){rows.stock[0].quantity+=data.p_delta;result=null;}
     else if(path.endsWith('/rpc/transfer_stock')){rows.stock[0].quantity-=data.p_quantity;rows.stock[1].quantity+=data.p_quantity;result=null;}
     else if(path.startsWith('/rest/v1/')){
+      if(path.endsWith('/sales_orders')&&orderUnavailable)return new w.Response(JSON.stringify({message:'Sales orders table not found'}),{status:404,headers:{'content-type':'application/json'}});
       result=rows[path.split('/').pop()];
       if(path.endsWith('/sales')&&url.searchParams.has('id'))result=rows.sales[0];
       if(result===undefined)throw new Error(`Unhandled mock table: ${path}`);
@@ -110,6 +126,24 @@ test('login, navigation, barcode checkout, receipt, adjustment, transfer, and re
     await waitFor(()=>!w.document.querySelector('#modal').open&&w.document.querySelector('.page').textContent.includes('Received'));
     assert.equal(rows.stock[0].quantity,8);click(w,`po:${po.id}`);click(w,`close-po:${po.id}`);
     await waitFor(()=>w.document.querySelector('#modal').textContent.includes('Closed'));assert.equal(po.status,'Closed');click(w,'close');
+    click(w,'nav:orders');await waitFor(()=>w.document.querySelector('[data-act="so-new"]'));
+    click(w,'so-new');w.document.querySelector(`#sales-order-form [name="qty-${p}"]`).value='2';
+    w.document.querySelector(`#sales-order-form [name="qty-${p}"]`).dispatchEvent(new w.Event('input',{bubbles:true}));
+    assert.match(w.document.querySelector('#order-estimate').textContent,/2.15/);
+    submit(w,'#sales-order-form');await waitFor(()=>w.document.querySelector('#notice').textContent.includes('Simulated lost response'));
+    assert.ok(w.localStorage.getItem(`campus-pending-order:${user.id}`));assert.equal(rows.stock[0].quantity,8);
+    assert.ok(w.document.querySelector('[data-act="so-new"]').disabled);
+    click(w,'so-retry');await waitFor(()=>w.document.querySelector('[data-act^="so-fulfill:"]'));
+    assert.equal(orderCalls,2);assert.equal(rows.sales_orders.length,1);assert.equal(w.localStorage.getItem(`campus-pending-order:${user.id}`),null);
+    const order=rows.sales_orders[0];click(w,`so-fulfill:${order.id}`);
+    await waitFor(()=>w.document.querySelector('#notice').textContent.includes('Insufficient stock'));
+    assert.equal(order.status,'Order Placed');assert.equal(rows.stock[0].quantity,8);
+    click(w,`so-fulfill:${order.id}`);await waitFor(()=>w.document.querySelector('[data-act^="so-close:"]'));
+    assert.equal(rows.stock[0].quantity,6);click(w,`receipt:${order.id}`);await waitFor(()=>w.document.querySelector('.receipt')?.textContent.includes('Thanks for stopping'));
+    assert.match(w.document.querySelector('.receipt').textContent,/2.15/);click(w,'close');click(w,`so-view:${order.id}`);click(w,`so-close:${order.id}`);
+    await waitFor(()=>w.document.querySelector('#modal').textContent.includes('Status: Closed'));assert.equal(rows.stock[0].quantity,6);click(w,'close');
+    orderUnavailable=true;click(w,'refresh');await waitFor(()=>w.document.querySelector('.page').textContent.includes('005_sales_orders.sql'));
+    click(w,'nav:checkout');assert.ok(w.document.querySelector('#sale-form'));
     click(w,'nav:guide');assert.match(w.document.querySelector('.page').textContent,/To build/);
   }catch(error){
     console.error('UI failure notice:',w.document.querySelector('#notice')?.textContent);

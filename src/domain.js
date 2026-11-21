@@ -17,6 +17,9 @@ export function validateConnection(projectUrl, key) {
 }
 export function cartTotals(cart, products, discount, rate) {
   const subtotal = Math.round(cart.reduce((sum, line) => sum + Number(products.find(p => p.id === line.product_id)?.price || 0) * line.quantity, 0) * 100) / 100;
-  const tax = Math.round(Math.max(0, subtotal - discount) * Number(rate) * 100) / 100;
+  // The database stores tax rates to five decimal places. Work in cents and
+  // that integer rate so $2 × 7.25% rounds to $0.15, not binary-float $0.14.
+  const netCents = Math.max(0, Math.round((subtotal - discount) * 100));
+  const tax = Math.round(netCents * Math.round(Number(rate) * 100000) / 100000) / 100;
   return { subtotal, discount, tax, total: Math.round((subtotal - discount + tax) * 100) / 100 };
 }
