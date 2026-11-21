@@ -38,3 +38,20 @@ The instructor chooses the live scenarios. Practice with varied requests rather 
 - Receive the remainder, including using a real printed barcode to select an outstanding item. Confirm Received status; close the order. Attempt early closing and over-receiving: both must fail.
 - Retry the same receipt form after a lost response and confirm no duplicate stock. Check a second user's inventory. Simultaneously receive the last outstanding units from two sessions; only one should succeed.
 - Unenrolled/anonymous users cannot access or write purchasing data. Supplier analytics, payment tracking, EOQ and reorder rules remain pending.
+
+
+## POS and sales order acceptance checks (migration 005)
+
+Automated tests run entirely in local PGlite and Happy DOM with fake Auth/network, not the shared project. They cover quote totals and snapshots, no financial/stock effect at placement, multi-line atomic fulfillment, correct location/current cost, report inclusion, failed stock fulfillment and retry, single receipt across retries, cancellation/closing rules, invalid inputs and aggregate quantity limits, and staff/customer/anonymous permissions. DOM checks cover navigation, estimate, a saved request after a simulated lost response, retry with identical inputs, shortage display, fulfillment, receipt and closing. Existing checkout/barcode/purchasing tests still run.
+
+After review, use a separate test Supabase project for these manual checks before changing the shared project:
+
+- Apply migrations in order through 005. Without 005, Sales orders must show setup guidance and existing checkout must still work.
+- In POS, add at least two products and a discount; complete/print the receipt and verify location stock, tax, revenue and COGS. Repeat a request after a lost response to prove only one sale. Scan physical printed labels with the actual device.
+- Place a two-item customer order with discount, location and required date. Note stock and current-date report totals before/after: placement must change neither. Print the quote. In the test database change catalog price/tax, then verify the original order quote stays fixed.
+- Fulfill the order. Verify exactly one linked receipt and SALE movements, stock reduction at the chosen location, net revenue excluding tax, and COGS at fulfillment costs. Closing must not deduct again. Refresh/retry fulfillment and confirm no duplicate sale.
+- Make an order with one item short. Fulfill: no item may be deducted and no receipt or partial financial event may remain. Replenish stock and retry. Cancel a different unfulfilled order and confirm no stock/finance effect. Reject cancellation of fulfilled/closed orders and fulfillment of cancelled orders.
+- Open two real staff sessions and compete for the last stock with fulfillment versus POS and with two fulfillments; only sufficient transactions may succeed. PGlite tests prove sequential/atomic logic, not actual multi-session contention. Order creation is demand, not guaranteed availability; POS may consume the stock first.
+- Simulate a lost order-creation response, reload that browser, navigate to Sales orders and retry the saved request: only one order should exist. A different login must not see the first user's pending request. Test two users' idle refresh/manual Refresh.
+- An unenrolled customer must not read order headers/lines or execute the staff functions. Anonymous access and direct table writes must fail. Customer portal remains a separate future capability.
+- Check the layout on real desktop/mobile browsers, keyboard navigation, quantity/discount validation, print output and pagination. No real-browser, live Supabase, multi-user contention or hardware verification is claimed by the automated suite.

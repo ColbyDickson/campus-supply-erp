@@ -18,3 +18,9 @@ test('cart preview calculates multi-line totals, discount, and rounded tax', () 
 test('database text is escaped before rendering into HTML', () => {
   assert.equal(escapeHtml('<script>"x" & \'y\'</script>'),'&lt;script&gt;&quot;x&quot; &amp; &#39;y&#39;&lt;/script&gt;');
 });
+
+test('tax preview rounds half cents like PostgreSQL numeric for POS and orders', () => {
+  const result=cartTotals([{product_id:'p',quantity:2}],[{id:'p',price:1}],0,0.0725);
+  assert.equal(result.tax,0.15);assert.equal(result.total,2.15);
+  assert.equal(cartTotals([{product_id:'p',quantity:3}],[{id:'p',price:1}],1,0.0725).tax,0.15);
+});

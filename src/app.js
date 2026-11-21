@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import JsBarcode from 'jsbarcode';
 import { money, escapeHtml as e, utcDay, monthStart, validateConnection, cartTotals } from './domain.js';
 import './style.css';
+import { salesOrdersModule } from './sales-orders.js';
 
 const root = document.querySelector('#app');
 const modal = document.querySelector('#modal');
@@ -25,6 +26,7 @@ const product = id => S.products.find(x => x.id === id);
 const locationName = id => S.locations.find(x => x.id === id)?.name || 'Location';
 const stockAt = (id, loc = S.location) => S.stock.find(x => x.product_id === id && x.location_id === loc) || { quantity: 0, average_cost: 0 };
 const formatTime = value => new Date(value).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+const salesOrders = salesOrdersModule({ S, modal, button, options, locationName, load, render, notify });
 const pendingKey = () => `campus-pending-sale:${S.session.user.id}`;
 function notify(message, error = false) {
   const n = document.querySelector('#notice');
@@ -53,7 +55,7 @@ function loginScreen() {
 async function connect(config) {
   S.client = createClient(config.url, config.key);
   S.client.auth.onAuthStateChange((event, session) => {
-    if (event === 'SIGNED_OUT') { S.session = null; stopSync(); loginScreen(); }
+    if (event === 'SIGNED_OUT') { S.session = null; stopSync(); salesOrders.reset(); modal.close(); loginScreen(); }
     if (event === 'TOKEN_REFRESHED') S.session = session;
   });
   const { data, error } = await S.client.auth.getSession();
@@ -66,6 +68,7 @@ function stopSync() {
 }
 async function startSession(session) {
   S.session = session;
+  S.nav='dashboard';S.cart=[];S.discount=0;S.customer='';S.pending=null;salesOrders.reset();
   root.innerHTML = '<main class="loading"><span class="spinner"></span><p>Opening your workspace…</p></main>';
   try {
     const { data, error } = await S.client.rpc('is_staff');
@@ -104,17 +107,17 @@ async function refresh(force = false) {
   if (!S.session || S.refreshing || S.busy) return;
   if (!force && (modal.open || ['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))) return;
   S.refreshing = true;
-  try { await load(); if(S.nav==='purchasing')await loadPurchases(); render(); } catch(error) { showError(new Error(`Refresh failed. ${error.message}`)); }
+  try { await load(); if(S.nav==='purchasing')await loadPurchases(); if(S.nav==='orders')await salesOrders.refresh(); render(); } catch(error) { showError(new Error(`Refresh failed. ${error.message}`)); }
   finally { S.refreshing=false; }
 }
 function render() {
-  const titles = { dashboard:['Business overview','Your operations, in one place.'],inventory:['Inventory','Know what’s on hand. Keep it moving.'],checkout:['Point of sale','A smooth checkout. Connected to your stock.'],purchasing:['Purchasing','Order supplies. Receive stock. Track what arrived.'],reports:['Financial reports','Follow the numbers back to the business.'],guide:['Project guide','Build it. Verify it. Explain it.'] };
+  const titles = { dashboard:['Business overview','Your operations, in one place.'],inventory:['Inventory','Know what’s on hand. Keep it moving.'],checkout:['Point of sale','A smooth checkout. Connected to your stock.'],orders:['Sales orders','Record customer demand. Fulfill once. Follow the receipt.'],purchasing:['Purchasing','Order supplies. Receive stock. Track what arrived.'],reports:['Financial reports','Follow the numbers back to the business.'],guide:['Project guide','Build it. Verify it. Explain it.'] };
   root.innerHTML = `<div class="app-shell"><aside class="sidebar"><div class="brand">${icon('inventory')}<span>campus<span class="brand-light">supply.</span></span></div>
     <div class="workspace-tag">CAMPUS SUPPLY CO. <span>ERP</span></div><nav aria-label="Main navigation">${Object.keys(titles).map(key=>button(`${icon(key)}<span>${key==='dashboard'?'Overview':key==='checkout'?'Checkout':key==='guide'?'Project guide':titles[key][0]}</span>`,`nav:${key}`,S.nav===key?'active':'',S.nav===key?'aria-current="page"':'')).join('')}</nav>
     <div class="sidebar-bottom"><span class="avatar">${e(S.session.user.email?.[0]?.toUpperCase() || 'C')}</span><div><strong>Team workspace</strong><small>${e(S.session.user.email)}</small></div>${button('↪','logout','icon-button','aria-label="Sign out"')}</div></aside>
     <main class="main"><header class="topbar"><span>WORKSPACE <span class="slash">/</span> ${e(titles[S.nav][0])}</span><div class="sync"><span class="sync-dot"></span>Checked ${S.updated?.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}) || '—'}${button('↻','refresh','icon-button','aria-label="Refresh data"')}${button('Sign out','logout','text-button mobile-signout')}</div></header>
     <div class="page"><div class="page-heading"><div><p class="eyebrow">CAMPUS SUPPLY CO.</p><h1>${titles[S.nav][0]}</h1><p>${titles[S.nav][1]}</p></div>${['inventory','checkout'].includes(S.nav)?`<label class="location-picker">WORKING LOCATION<select id="location" ${S.pending?'disabled':''}>${options(S.locations,S.location)}</select></label>`:S.nav==='dashboard'?button('＋ New sale','nav:checkout','primary'):''}</div>
-    ${S.nav==='dashboard'?dashboard():S.nav==='inventory'?inventory():S.nav==='checkout'?checkoutView():S.nav==='purchasing'?purchasing():S.nav==='reports'?reports():guide()}</div>
+    ${S.nav==='dashboard'?dashboard():S.nav==='inventory'?inventory():S.nav==='checkout'?checkoutView():S.nav==='purchasing'?purchasing():S.nav==='orders'?salesOrders.view():S.nav==='reports'?reports():guide()}</div>
     <footer>Campus Supply Co. · Class ERP foundation <span>All report dates use UTC · Sample company, fictional data</span></footer></main></div>`;
 }
 const metric = (label,value,description,accent='') => `<article class="metric ${accent}"><span>${label}</span><strong>${value}</strong><small>${description}</small></article>`;
@@ -158,7 +161,7 @@ function reports() {
     <section class="panel"><div class="panel-heading"><div><h2>How the calculations connect</h2><p>These results are computed in the database.</p></div></div><div class="formula-grid"><div><strong>Net sales</strong><p>Stored sale subtotals − discounts. Tax is excluded.</p></div><div><strong>Inventory valuation</strong><p>Quantity on hand × weighted average unit cost, summed across locations.</p></div><div><strong>Inventory turnover</strong><p>Period COGS ÷ average of opening and closing inventory values, reconstructed from movement history.</p><small>Opening ${money(S.report.opening_inventory)} · Closing ${money(S.report.closing_inventory)}</small></div></div></section>`;
 }
 function guide() {
-  const rows=[['1','Point of sale','Foundation ready','Multi-line sales, tax, discounts, stored receipts, stock reduction and COGS.'],['2','Inventory','Partly ready','Three locations, quantities, transfers and reason-coded adjustments. Backorders and availability dates remain.'],['3','Barcodes','Hardware check needed','Code 128 labels and keyboard/USB scan-to-add and scan-to-adjust. Verify printed labels with your actual scanner.'],['4','Sales orders','To build','Order lifecycle and reservation/fulfillment rules.'],['5','Returns & exchanges','To build','Original-sale links, refund limits, quality dispositions, revenue and cost reversals.'],['6','Production','To build','BOMs are seeded; issue/build/scrap, cost rollup, timestamps and metrics remain.'],['7','Purchasing & suppliers','Partly ready','Create/print POs, expected lead-time dates, partial receiving, weighted costs and order closing. Sending is simulated. Supplier editing, EOQ/reorder rules, payments and scorecards remain.'],['8','MRP','To build','Confirmed demand → BOM requirements → net inventory/open PO supply → suggested quantities and dates.'],['9','Financial reporting','Partly ready','P&L for implemented events, weighted inventory valuation, and period inventory turnover. Extend for later modules.'],['10','Manager reporting','Partly ready','Daily sales, top products, low stock and location inventory; procurement recommendations remain.'],['11','Customer portal','To build','Customer login and pickup ordering with separate restricted access.'],['12','Multi-user access','Verify in Supabase','Staff accounts, server transactions, realtime subscription and 10-second refresh fallback. Test two real browsers.']];
+  const rows=[['1','Point of sale','Foundation ready','Multi-line sales, tax, discounts, stored receipts, stock reduction and COGS.'],['2','Inventory','Partly ready','Three locations, quantities, transfers and reason-coded adjustments. Backorders and availability dates remain.'],['3','Barcodes','Hardware check needed','Code 128 labels and keyboard/USB scan-to-add and scan-to-adjust. Verify printed labels with your actual scanner.'],['4','Sales orders','Implemented · verify live','Customer orders, required dates, fixed quotes, atomic fulfillment, receipts, closing and cancellation (migration 005). Orders do not reserve stock.'],['5','Returns & exchanges','To build','Original-sale links, refund limits, quality dispositions, revenue and cost reversals.'],['6','Production','To build','BOMs are seeded; issue/build/scrap, cost rollup, timestamps and metrics remain.'],['7','Purchasing & suppliers','Partly ready','Create/print POs, expected lead-time dates, partial receiving, weighted costs and order closing. Sending is simulated. Supplier editing, EOQ/reorder rules, payments and scorecards remain.'],['8','MRP','To build','Confirmed demand → BOM requirements → net inventory/open PO supply → suggested quantities and dates.'],['9','Financial reporting','Partly ready','P&L for implemented events, weighted inventory valuation, and period inventory turnover. Extend for later modules.'],['10','Manager reporting','Partly ready','Daily sales, top products, low stock and location inventory; procurement recommendations remain.'],['11','Customer portal','To build','Customer login and pickup ordering with separate restricted access.'],['12','Multi-user access','Verify in Supabase','Staff accounts, server transactions, realtime subscription and 10-second refresh fallback. Test two real browsers.']];
   return `<section class="panel guide-intro"><p class="eyebrow">BUILD MILESTONE 1</p><h2>A working foundation, with a clear path forward.</h2><p>This starter is not the finished assignment. Before the live demo, complete and verify all twelve capabilities. Every teammate should be able to explain how a sale, a build, and a purchase affect the rest of the system.</p></section><section class="panel"><div class="panel-heading"><h2>Assignment checklist</h2></div><div class="table-wrap"><table><thead><tr><th>#</th><th>CAPABILITY</th><th>STATUS</th><th>DETAILS</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r[0]}</td><td><strong>${r[1]}</strong></td><td><span class="badge ${r[2]==='To build'?'warning':''}">${r[2]}</span></td><td>${r[3]}</td></tr>`).join('')}</tbody></table></div></section>
     <section class="panel"><div class="panel-heading"><h2>Tools & architecture</h2></div><div class="formula-grid"><div><strong>Code & hosting</strong><p>JavaScript, Vite, GitHub and GitHub Pages. AI coding assistance: OpenAI Codex in ChatGPT.</p></div><div><strong>Shared data & identity</strong><p>Supabase PostgreSQL, Supabase Auth, row-level security and transactional database functions.</p></div><div><strong>Checks</strong><p>Node’s test runner and PGlite (PostgreSQL) check seeded data, transactions, valuation and access rules. Real Supabase and physical barcode checks are still required.</p></div></div></section>`;
 }
@@ -264,7 +267,8 @@ function receivePurchaseDialog(id) {
 async function handleAction(target) {
   const [action,id,arg]=target.dataset.act.split(':');
   if(S.busy&&action!=='close')return;
-  if(action==='nav'){S.nav=id;if(id==='purchasing')await loadPurchases();render();}
+  if(action==='nav'){S.nav=id;if(id==='purchasing')await loadPurchases();if(id==='orders')await salesOrders.refresh();render();}
+  else if(action.startsWith('so-'))await salesOrders.action(action,id);
   else if(action==='refresh')await refresh(true);
   else if(action==='logout'){ await S.client.auth.signOut(); S.cart=[];S.pending=null; }
   else if(action==='disconnect'){if(S.client)await S.client.auth.signOut();localStorage.removeItem('campus-connection');location.reload();}
@@ -288,6 +292,7 @@ document.addEventListener('click',event=>{
   if(target){ event.preventDefault();handleAction(target).catch(showError); }
 });
 document.addEventListener('input',event=>{
+  if(event.target.closest('#sales-order-form'))salesOrders.estimate(event.target.closest('form'));
   if(event.target.id==='inventory-search'){S.query=event.target.value;rerenderInput('inventory-search');}
   if(event.target.id==='pos-search'){S.posQuery=event.target.value;rerenderInput('pos-search');}
 });
@@ -325,7 +330,8 @@ document.addEventListener('submit',async event=>{
     } else if(form.id==='login-form'){
       const {data:result,error}=await S.client.auth.signInWithPassword({email:String(data.get('email')).trim(),password:String(data.get('password'))});
       if(error)throw error;await startSession(result.session);
-    } else if(form.id==='sale-form')await completeSale();
+    } else if(form.id==='sales-order-form')await salesOrders.submit(form);
+    else if(form.id==='sale-form')await completeSale();
     else if(form.id==='inventory-form'){
       S.busy=true;
       const qty=Number(data.get('quantity')), note=String(data.get('note')).trim();
