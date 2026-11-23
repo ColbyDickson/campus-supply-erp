@@ -1,8 +1,8 @@
 # Campus Supply Co. ERP
 
-A team class project for a fictional campus supplies retailer that also assembles kits. This is **milestone 1, a working foundation**, not the completed 12-capability assignment.
+A team class project for a fictional campus supplies retailer that also assembles kits. The connected ERP is in active development; remaining capabilities are tracked in the Project guide.
 
-The starter connects staff login, inventory at three locations, reason-coded adjustments, transfers, barcode checkout, receipts, and financial reports to a shared Supabase PostgreSQL database. Future work is tracked in [PROJECT_PLAN.md](PROJECT_PLAN.md) and inside the app's Project guide.
+The app connects staff login, inventory at three locations, adjustments, transfers, barcode checkout, sales orders, supplier management, purchasing, MRP, and financial reports to a shared Supabase PostgreSQL database. Future work is tracked in [PROJECT_PLAN.md](PROJECT_PLAN.md) and inside the app's Project guide.
 
 ## Set it up without installing anything
 
@@ -76,13 +76,14 @@ Use **Inventory → Print barcode labels** to print Code 128 labels. A USB scann
 - Code 128 labels, keyboard/USB scan-to-add, and scan-to-adjust.
 - Daily sales, recent receipts, top products, low-stock flags, location valuation, modeled P&L, and period inventory turnover, all calculated from records.
 - Realistic starting records and historical demand with weekday, item-popularity, and seasonal differences.
+- Supplier editing, PO drafting and dispatch recording, receipt bills/payments, computed supplier scorecards, lead-time reorder rules, EOQ, manual review and four-week MRP (migrations 006/007).
 - In-app tool documentation and an honest assignment checklist.
 
 ## What remains before the final demo
 
-Returns/exchanges, production operations and quality metrics, supplier editing and scorecards/payments, lead-time reorder rules and EOQ, backorders/availability dates, MRP, customer pickup ordering, a wow feature, and live acceptance checks. The five BOMs and supplier records are starting data, not functioning production operations. Purchasing is added by migration 004 below. Kits in this starter are sold from preassembled finished stock; checkout does not also consume their components.
+Returns/exchanges, production operations and quality metrics, production-to-MRP firm-supply integration, customer pickup ordering, complete availability/backorder workflows, a team wow feature, and live acceptance checks remain. Five single-level kit BOMs are supplied; build execution belongs to the production module. Purchasing/MRP functionality is documented in [PURCHASING_MRP_GUIDE.md](PURCHASING_MRP_GUIDE.md).
 
-The starter P&L covers the events implemented so far. It does not record rent, payroll, supplier bills, returns, or a full accounting general ledger. Inventory turnover is COGS for the selected period divided by the average of opening and closing inventory value; it is **not annualized**. The tax rate is fictional for class and editable by the project owner in `settings`.
+The starter P&L covers the events implemented so far. Purchasing now records receipt bills and payments separately; bill payment is not another P&L expense. Rent, payroll, returns and a full accounting general ledger remain outside this implementation. Inventory turnover is COGS for the selected period divided by the average of opening and closing inventory value; it is **not annualized**. The tax rate is fictional for class and editable by the project owner in `settings`.
 
 See [PROJECT_PLAN.md](PROJECT_PLAN.md) for ownership and build order and [VERIFICATION.md](VERIFICATION.md) for checks to run before demonstrating.
 
@@ -122,14 +123,15 @@ Sales snapshot prices and unit costs so later cost changes do not rewrite past p
 
 AI coding assistance: **OpenAI Codex in ChatGPT**. Frontend: **JavaScript + Vite**. Shared database, identity, and change notifications: **Supabase PostgreSQL, Auth, Realtime**. Barcodes: **JsBarcode**. Testing: **Node test runner, PGlite, Happy DOM**. Code collaboration and interface hosting: **GitHub and GitHub Pages**. Your team remains responsible for verifying results and understanding the ERP concepts.
 
-## Purchasing update: apply to your existing project
+## Purchasing, suppliers and MRP update (006/007)
 
-After merging the purchasing pull request, run **only** [supabase/004_purchasing.sql](supabase/004_purchasing.sql) in a new Supabase SQL Editor query. Do not rerun 001 or reseed/reset your database. This migration preserves existing users, inventory, and sales. Refresh the website; the Purchasing tab is available. Until the migration is applied, that tab displays setup instructions and the original modules still work.
+**Existing project with 001–005 already applied:** after merging this update, run only [006_supplier_planning_mrp.sql](supabase/006_supplier_planning_mrp.sql), then [007_supplier_history.sql](supabase/007_supplier_history.sql), each in a new Supabase SQL Editor query. Do not rerun prior schema/seed files. 006 extends the schema; 007 links existing generated historical replenishments to supplier history without receiving that inventory again. 007 has an import marker to prevent duplicate imports. No live database was changed while preparing the code.
 
-In Purchasing, create a PO for a supplier, enter quantities and negotiated costs, and save it. Creation marks it **Order Sent** as a class simulation; the app does not email suppliers. Use View / print to print or save the PO. Expected date is sent date (UTC) plus the supplier's quoted lead days, snapshotted together with payment terms. Choose Receive delivery, optionally scan the item barcode, select the PO item and receiving location, and enter the quantity that arrived. Multiple partial receipts are allowed; over-receiving is rejected. Receipt history compares actual dates with expected dates. Receipt costs update weighted inventory valuation and the movement ledger; purchasing inventory does not immediately create a sales expense. Fully received POs become Received and can then be Closed.
+For a completely new project, finish the initial schema, seed and staff enrollment above, then apply 004, 005, 006 and 007 in that order. If a query errors, retain the exact message and stop before running another migration.
 
-Supplier editing, historical PO data, payments/bills, supplier scorecards, reorder rules, and EOQ remain future work. PO receipt retries on the same open form use the same request ID; if a network result is unclear, inspect history before reopening the form or refreshing the browser. Real multi-session receiving and physical barcode tests are still required.
+Purchasing now has **Purchase orders**, **Suppliers & payments**, and **Reorder & EOQ** sections, plus a separate **MRP** navigation item. Save a PO draft, prepare an email in your own email client or print/share the document, then record dispatch. Record partial receipts into its planned location. Receipt bills have due dates and support partial payment recording. Supplier ratings come from all stored sent PO/receipt/payment history, including labelled generated examples. Reorder and EOQ use six months plus today's sales, editable costs, safety stocks and review intervals. The MRP plan uses confirmed sales orders, kit BOMs, available stock and timely incoming POs by location/date.
 
+Read [PURCHASING_MRP_GUIDE.md](PURCHASING_MRP_GUIDE.md) for exact formulas, new UI steps, email/payment limitations, production integration, historical import invariants and acceptance checks. Its workflow supersedes the original 004 UI, which immediately marked POs sent as a simulation. Existing legacy POs and transactions are preserved. Unassigned legacy incoming supply must be assigned a delivery location before MRP can use it.
 
 ## POS and sales orders (capabilities 1 and 4)
 
@@ -146,7 +148,7 @@ After review/merge, the project coordinator must run **only `supabase/005_sales_
 ### Interface for other feature owners
 
 - Staff-only `sales_orders` headers contain `customer_id`, `location_id`, `required_date`, `status`, `created_at`, `created_by`, quote totals, lifecycle timestamps and nullable unique `sale_id`. `sales_order_lines` contains `sales_order_id`, `product_id`, confirmed integer `quantity`, and quote snapshots. Relationships use the existing product/customer/location tables.
-- **MRP:** read lines whose header is `Order Placed`, grouped by `location_id` and `required_date`. Quantity is confirmed outstanding demand; there is no separate reservation quantity to subtract. Exclude Fulfilled, Closed and Cancelled. Query the database with appropriate date filters and pagination, not the UI's current 100-row page. Production, BOM netting and supply calculations remain the MRP owner's responsibility.
+- **MRP:** read lines whose header is `Order Placed`, grouped by `location_id` and `required_date`. Quantity is confirmed outstanding demand; there is no separate reservation quantity to subtract. Exclude Fulfilled, Closed and Cancelled. Query the database with appropriate date filters and pagination, not the UI's current 100-row page. Migration 006 now implements BOM/stock/PO netting from that interface. See PURCHASING_MRP_GUIDE.md for the issued-build supply adapter the production owner must connect.
 - **Returns/finance:** `sales_orders.sale_id` links fulfillment to the ordinary `sales`, `sale_lines` and `movements` used by POS and existing reports. Revenue excludes tax and subtracts discount; COGS uses costs at fulfillment. Placement/cancellation/closing do not alter P&L. No duplicate order finance ledger exists.
 - **Customer portal:** this migration deliberately grants no customer access. A later reviewed migration must map Auth identities to customer records, provide safe availability and customer-owned order policies/functions. Do not enroll customers as staff or expose staff RPCs. Customer login and self-service pickup ordering remain unfinished.
 - Writes go through staff RPCs `create_sales_order(p_id,p_customer,p_location,p_required_date,p_items,p_discount)` and `transition_sales_order(p_order,p_status)`; direct browser table writes are denied. Existing POS checkout is unchanged. Do not check out an order a second time at POS: use **Fulfill order**.

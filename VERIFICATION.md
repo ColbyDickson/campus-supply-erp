@@ -37,7 +37,7 @@ The instructor chooses the live scenarios. Practice with varied requests rather 
 - Receive some units into Stockroom; confirm stock quantity, weighted cost and valuation change and that net sales do not. Check actual-versus-expected date in history.
 - Receive the remainder, including using a real printed barcode to select an outstanding item. Confirm Received status; close the order. Attempt early closing and over-receiving: both must fail.
 - Retry the same receipt form after a lost response and confirm no duplicate stock. Check a second user's inventory. Simultaneously receive the last outstanding units from two sessions; only one should succeed.
-- Unenrolled/anonymous users cannot access or write purchasing data. Supplier analytics, payment tracking, EOQ and reorder rules remain pending.
+- Unenrolled/anonymous users cannot access or write purchasing data. Supplier analytics, receipt bills/payments, EOQ and reorder rules are added by 006/007 and need the new acceptance checks below.
 
 
 ## POS and sales order acceptance checks (migration 005)
@@ -55,3 +55,9 @@ After review, use a separate test Supabase project for these manual checks befor
 - Simulate a lost order-creation response, reload that browser, navigate to Sales orders and retry the saved request: only one order should exist. A different login must not see the first user's pending request. Test two users' idle refresh/manual Refresh.
 - An unenrolled customer must not read order headers/lines or execute the staff functions. Anonymous access and direct table writes must fail. Customer portal remains a separate future capability.
 - Check the layout on real desktop/mobile browsers, keyboard navigation, quantity/discount validation, print output and pagination. No real-browser, live Supabase, multi-user contention or hardware verification is claimed by the automated suite.
+
+## Purchasing / suppliers / MRP acceptance (006/007)
+
+Follow [PURCHASING_MRP_GUIDE.md](PURCHASING_MRP_GUIDE.md), including its worked 10-kit example and production-owner view contract. Apply 006 once after 005; then 007. Confirm history import does not change inventory quantity/value or P&L. Test new PO drafts, user-controlled email/print handoff, recorded dispatch, original promises versus revised ETA, location-specific partial receiving, bills and partial/full payments, computed scorecards, settings-driven EOQ, saved periodic reviews and MRP shortages changing with demand/supply timing. UI tests now exercise these forms with a fake transport; the PostgreSQL tests execute actual 006/007 SQL. Run npm test for the current total. Live API, real browser/printing, hardware, email delivery and simultaneous-session tests remain manual.
+
+Migration 006's empty firm-build supply adapter truthfully reports zero scheduled production output until the production owner connects issued work orders. MRP's suggested Make rows do not execute builds. All five seeded BOMs are single-level; optional nested BOMs are rejected explicitly.
